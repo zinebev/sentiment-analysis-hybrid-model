@@ -1,4 +1,4 @@
-# Complete Sentiment Analysis Application
+# Complete Sentiment Analysis Application - FIXED VERSION
 # This includes data preprocessing, model training, and Streamlit interface
 
 import os
@@ -27,6 +27,10 @@ class SentimentAnalyzer:
         self.distilbert_tokenizer = None
         self.emotions = ['joy', 'sadness', 'anger', 'fear', 'surprise', 'love']
         
+        # Ensure models directory exists
+        self.models_dir = 'models'
+        os.makedirs(self.models_dir, exist_ok=True)
+        
     def preprocess_text(self, text):
         """Basic text preprocessing"""
         if not isinstance(text, str):
@@ -51,6 +55,40 @@ class SentimentAnalyzer:
         text = re.sub(r'\s+', ' ', text).strip()
         
         return text
+    
+    def create_sample_data(self):
+        """Create sample dataset if no CSV is provided"""
+        sample_data = {
+            'text': [
+                "I am so happy and excited about this!",
+                "This is absolutely wonderful and amazing!",
+                "I love this so much, it brings me joy!",
+                "I feel really sad and disappointed today",
+                "This makes me feel down and depressed",
+                "I'm heartbroken and feeling blue",
+                "This makes me so angry and furious!",
+                "I'm irritated and frustrated with this situation",
+                "This is making me mad and upset",
+                "I'm scared and worried about what might happen",
+                "This frightens me and makes me nervous",
+                "I feel anxious and afraid",
+                "What a surprise! I didn't expect this at all!",
+                "I'm shocked and amazed by this news",
+                "This is such an unexpected pleasant surprise",
+                "I love spending time with my family and friends",
+                "Love is in the air and I feel romantic",
+                "I have so much love and affection for this"
+            ],
+            'label': [
+                'joy', 'joy', 'joy',
+                'sadness', 'sadness', 'sadness', 
+                'anger', 'anger', 'anger',
+                'fear', 'fear', 'fear',
+                'surprise', 'surprise', 'surprise',
+                'love', 'love', 'love'
+            ]
+        }
+        return pd.DataFrame(sample_data)
     
     def load_csv_data(self, uploaded_file):
         """Load data from uploaded CSV file"""
@@ -84,45 +122,100 @@ class SentimentAnalyzer:
             st.error(f"Error loading CSV file: {str(e)}")
             return None, None
     
+    def check_existing_models(self):
+        """Check if models already exist"""
+        model_path = os.path.join(self.models_dir, 'logreg_model.joblib')
+        vectorizer_path = os.path.join(self.models_dir, 'tfidf_vectorizer.joblib')
+        
+        models_exist = os.path.exists(model_path) and os.path.exists(vectorizer_path)
+        
+        if models_exist:
+            # Check file sizes to ensure they're not empty
+            model_size = os.path.getsize(model_path) if os.path.exists(model_path) else 0
+            vectorizer_size = os.path.getsize(vectorizer_path) if os.path.exists(vectorizer_path) else 0
+            
+            if model_size > 0 and vectorizer_size > 0:
+                return True, model_path, vectorizer_path
+            else:
+                st.warning("Found model files but they appear to be empty. Will retrain.")
+                return False, model_path, vectorizer_path
+        
+        return False, model_path, vectorizer_path
+    
     def load_or_train_logreg(self, uploaded_file=None, force_retrain=False):
         """Load or train Logistic Regression model"""
-        model_path = './models/logreg_model.joblib'
-        vectorizer_path = './models/tfidf_vectorizer.joblib'
+        models_exist, model_path, vectorizer_path = self.check_existing_models()
         
-        # Create models directory if it doesn't exist
-        os.makedirs('./models', exist_ok=True)
+        if models_exist and not force_retrain:
+            try:
+                st.info("Loading saved Logistic Regression model...")
+                self.vectorizer = joblib.load(vectorizer_path)
+                self.logreg_model = joblib.load(model_path)
+                st.success("✅ Logistic Regression model loaded successfully!")
+                return True
+            except Exception as e:
+                st.warning(f"Failed to load saved models: {e}. Will retrain.")
+                force_retrain = True
         
-        if os.path.exists(model_path) and os.path.exists(vectorizer_path) and not force_retrain:
-            st.info("Loading saved Logistic Regression model...")
-            self.vectorizer = joblib.load(vectorizer_path)
-            self.logreg_model = joblib.load(model_path)
-            return True
+        # Train new model
+        if uploaded_file is not None:
+            st.info("Training new Logistic Regression model with uploaded data...")
+            return self.train_logreg_model_from_upload(uploaded_file, model_path, vectorizer_path)
         else:
-            if uploaded_file is not None:
-                st.info("Training new Logistic Regression model...")
-                return self.train_logreg_model(uploaded_file, model_path, vectorizer_path)
-            else:
-                st.warning("No training data provided and no saved model found.")
-                return False
+            st.info("No CSV uploaded. Training with sample data...")
+            return self.train_logreg_model_sample(model_path, vectorizer_path)
     
-    def train_logreg_model(self, uploaded_file, model_path, vectorizer_path):
-        """Train Logistic Regression model"""
+    def train_logreg_model_from_upload(self, uploaded_file, model_path, vectorizer_path):
+        """Train Logistic Regression model from uploaded CSV"""
         try:
             # Load data from uploaded CSV
             texts, labels = self.load_csv_data(uploaded_file)
             if texts is None or labels is None:
                 return False
             
-            # Train/test split
-            X_train, X_test, y_train, y_test = train_test_split(
-                texts, labels, test_size=0.2, random_state=42, stratify=labels)
+            return self._train_logreg_with_data(texts, labels, model_path, vectorizer_path)
+            
+        except Exception as e:
+            st.error(f"Error training model from uploaded data: {str(e)}")
+            return False
+    
+    def train_logreg_model_sample(self, model_path, vectorizer_path):
+        """Train Logistic Regression model with sample data"""
+        try:
+            # Create sample data
+            df = self.create_sample_data()
+            texts = [self.preprocess_text(text) for text in df['text'].tolist()]
+            labels = df['label'].tolist()
+            
+            st.info(f"Training with {len(texts)} sample texts...")
+            return self._train_logreg_with_data(texts, labels, model_path, vectorizer_path)
+            
+        except Exception as e:
+            st.error(f"Error training model with sample data: {str(e)}")
+            return False
+    
+    def _train_logreg_with_data(self, texts, labels, model_path, vectorizer_path):
+        """Internal method to train LogReg with given data"""
+        try:
+            # Train/test split (ensure we have enough data for both classes)
+            if len(set(labels)) < 2:
+                st.error("Need at least 2 different labels for training!")
+                return False
+            
+            if len(texts) < 4:
+                st.warning("Very small dataset. Results may not be reliable.")
+                X_train, X_test, y_train, y_test = texts, texts, labels, labels
+            else:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    texts, labels, test_size=0.2, random_state=42, 
+                    stratify=labels if len(texts) > 10 else None)
             
             # TF-IDF Vectorization
             self.vectorizer = TfidfVectorizer(
                 max_features=5000,
                 stop_words='english',
                 ngram_range=(1, 2),
-                min_df=2,
+                min_df=1,  # Reduced for small datasets
                 max_df=0.95
             )
             
@@ -144,18 +237,19 @@ class SentimentAnalyzer:
             y_pred = self.logreg_model.predict(X_test_tfidf)
             accuracy = accuracy_score(y_test, y_pred)
             
-            st.success(f"Training completed in {training_time:.2f} seconds")
-            st.success(f"Model accuracy: {accuracy:.4f}")
+            st.success(f"✅ Training completed in {training_time:.2f} seconds")
+            st.success(f"📊 Model accuracy: {accuracy:.4f}")
+            st.info(f"🎯 Trained on {len(set(labels))} emotion classes: {', '.join(set(labels))}")
             
             # Save models
             joblib.dump(self.logreg_model, model_path)
             joblib.dump(self.vectorizer, vectorizer_path)
-            st.success("Models saved successfully!")
+            st.success("💾 Models saved successfully!")
             
             return True
             
         except Exception as e:
-            st.error(f"Error training model: {str(e)}")
+            st.error(f"Error in training process: {str(e)}")
             return False
     
     def load_distilbert(self):
@@ -170,18 +264,19 @@ class SentimentAnalyzer:
                 # Set to evaluation mode
                 self.distilbert_model.eval()
                 
-            st.success("DistilBERT model loaded successfully!")
+            st.success("✅ DistilBERT model loaded successfully!")
             return True
             
         except Exception as e:
-            st.error(f"Error loading DistilBERT: {str(e)}")
+            st.error(f"❌ Error loading DistilBERT: {str(e)}")
+            st.info("💡 Note: DistilBERT requires internet connection for first download")
             return False
     
     def predict_logreg(self, text):
         """Predict using Logistic Regression"""
         try:
             if self.logreg_model is None or self.vectorizer is None:
-                return {"error": "Logistic Regression model not loaded"}
+                return {"error": "Logistic Regression model not loaded. Please load/train the model first."}
             
             # Preprocess and vectorize
             clean_text = self.preprocess_text(text)
@@ -211,7 +306,7 @@ class SentimentAnalyzer:
         """Predict using DistilBERT"""
         try:
             if self.distilbert_model is None or self.distilbert_tokenizer is None:
-                return {"error": "DistilBERT model not loaded"}
+                return {"error": "DistilBERT model not loaded. Please load the model first."}
             
             # Tokenize
             inputs = self.distilbert_tokenizer(
@@ -252,10 +347,14 @@ class SentimentAnalyzer:
             logreg_result = self.predict_logreg(text)
             distilbert_result = self.predict_distilbert(text)
             
-            if 'error' in logreg_result:
-                return logreg_result
-            if 'error' in distilbert_result:
+            if 'error' in logreg_result and 'error' in distilbert_result:
+                return {"error": "Both models failed. Please load at least one model."}
+            elif 'error' in logreg_result:
+                st.warning("Logistic Regression failed, using only DistilBERT")
                 return distilbert_result
+            elif 'error' in distilbert_result:
+                st.warning("DistilBERT failed, using only Logistic Regression")
+                return logreg_result
             
             # Get all unique emotions
             all_emotions = set(logreg_result['probabilities'].keys()) | set(distilbert_result['probabilities'].keys())
@@ -304,6 +403,14 @@ def main():
     # Sidebar for model loading
     st.sidebar.header("⚙️ Model Configuration")
     
+    # Show current directory info for debugging
+    with st.sidebar.expander("🔍 Debug Info"):
+        st.write("**Current Directory:**", os.getcwd())
+        st.write("**Models Directory Exists:**", os.path.exists('models'))
+        if os.path.exists('models'):
+            model_files = os.listdir('models')
+            st.write("**Files in models/:**", model_files if model_files else "Empty")
+    
     # File upload for training data
     uploaded_file = st.sidebar.file_uploader(
         "Upload Training Dataset (CSV)", 
@@ -313,18 +420,28 @@ def main():
     
     # Load Logistic Regression model
     if st.sidebar.button("🔄 Load/Train Logistic Regression"):
-        analyzer.load_or_train_logreg(uploaded_file)
+        with st.spinner("Loading/Training Logistic Regression..."):
+            success = analyzer.load_or_train_logreg(uploaded_file)
+            if not success:
+                st.sidebar.error("Failed to load/train Logistic Regression model")
     
     # Load DistilBERT model
     if st.sidebar.button("🤖 Load DistilBERT"):
-        analyzer.load_distilbert()
+        with st.spinner("Loading DistilBERT..."):
+            analyzer.load_distilbert()
     
     # Force retrain option
     if st.sidebar.button("🔥 Force Retrain LogReg"):
-        if uploaded_file is not None:
+        with st.spinner("Retraining Logistic Regression..."):
             analyzer.load_or_train_logreg(uploaded_file, force_retrain=True)
-        else:
-            st.sidebar.error("Please upload a training dataset first!")
+    
+    # Auto-load models on startup
+    if st.sidebar.button("🚀 Auto-Setup Models"):
+        with st.spinner("Setting up all models..."):
+            st.info("Setting up Logistic Regression...")
+            analyzer.load_or_train_logreg(uploaded_file)
+            st.info("Setting up DistilBERT...")
+            analyzer.load_distilbert()
     
     # Main interface
     col1, col2 = st.columns([2, 1])
@@ -332,9 +449,16 @@ def main():
     with col1:
         st.header("📝 Text Input")
         
+        # Handle sample text from session state
+        default_text = ""
+        if 'sample_text' in st.session_state:
+            default_text = st.session_state.sample_text
+            del st.session_state.sample_text
+        
         # Text input
         user_text = st.text_area(
             "Enter your text for sentiment analysis:",
+            value=default_text,
             height=150,
             placeholder="Type or paste your text here..."
         )
@@ -381,6 +505,14 @@ def main():
         st.write(f"**Logistic Regression:** {logreg_status}")
         st.write(f"**DistilBERT:** {distilbert_status}")
         
+        # Model details
+        if analyzer.logreg_model is not None:
+            try:
+                classes = analyzer.logreg_model.classes_
+                st.write(f"**LogReg Classes:** {', '.join(classes)}")
+            except:
+                pass
+        
         # Sample texts for testing
         st.subheader("🧪 Sample Texts")
         sample_texts = [
@@ -392,9 +524,10 @@ def main():
             "I love spending time with my family."
         ]
         
-        selected_sample = st.selectbox("Choose a sample:", [""] + sample_texts)
-        if selected_sample and st.button("📋 Use Sample"):
+        selected_sample = st.selectbox("Choose a sample:", ["Select a sample..."] + sample_texts)
+        if selected_sample != "Select a sample..." and st.button("📋 Use Sample"):
             st.session_state.sample_text = selected_sample
+            st.rerun()
         
         # Dataset info
         st.subheader("📋 Dataset Requirements")
@@ -409,6 +542,8 @@ def main():
         "I am happy",joy
         "I feel sad",sadness
         ```
+        
+        **Note:** If no CSV is uploaded, the app will train on sample data.
         """)
 
 def display_results(result, model_choice):
@@ -451,13 +586,19 @@ def display_results(result, model_choice):
         
         with col1:
             st.write("**Logistic Regression:**")
-            st.write(f"Prediction: {result['logreg_result']['prediction']}")
-            st.write(f"Confidence: {result['logreg_result']['confidence']:.3f}")
+            if 'error' not in result['logreg_result']:
+                st.write(f"Prediction: {result['logreg_result']['prediction']}")
+                st.write(f"Confidence: {result['logreg_result']['confidence']:.3f}")
+            else:
+                st.write("❌ Failed")
         
         with col2:
             st.write("**DistilBERT:**")
-            st.write(f"Prediction: {result['distilbert_result']['prediction']}")
-            st.write(f"Confidence: {result['distilbert_result']['confidence']:.3f}")
+            if 'error' not in result['distilbert_result']:
+                st.write(f"Prediction: {result['distilbert_result']['prediction']}")
+                st.write(f"Confidence: {result['distilbert_result']['confidence']:.3f}")
+            else:
+                st.write("❌ Failed")
 
 if __name__ == "__main__":
     main()
