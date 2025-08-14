@@ -138,9 +138,8 @@ The dataset used is licensed separately under [CC BY-SA 4.0](https://creativecom
 ---
 
 ## 📧 Contact
-
-**Your Name** – zinebelrhiti111@gmail.com
-GitHub: zinebev 
+Zineb
+zinebelrhiti111@gmail.com
 https://github.com/zinebev
 
 ---
